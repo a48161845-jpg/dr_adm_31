@@ -1,4 +1,3 @@
-Mr. Spooky 👻, [18.10.2025 0:47]
 import os
 import datetime
 import requests
