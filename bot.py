@@ -28,7 +28,7 @@ CONFIG = {
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
-    'ADMINS': ["1004974578", "7233257134", "5472545113"],
+    'ADMINS': ["1004974578", "7233257134", "6195550631"],
 }
 
 SEND_ARGS = {
