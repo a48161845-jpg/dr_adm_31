@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
-    'CHAT_ID': "-1003452972632",
-    'THREAD_ID': 25,  # Укажите существующий thread или оставьте None
+    'CHAT_ID': "-1002124864225",
+    'THREAD_ID': 16232,  # Укажите существующий thread или оставьте None
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
