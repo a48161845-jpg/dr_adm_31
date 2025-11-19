@@ -1,34 +1,42 @@
 import os
 import datetime
 import requests
+import logging
+import time
 import json
-import csv
 import re
-import asyncio
 from io import StringIO
+import csv
 
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import Update, MessageEntity
+from telegram.ext import Application, CommandHandler, ContextTypes, filters
+import telegram.error
 
-# --- Конфигурация ---
+# Логирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Конфигурация
 CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
-    'CHAT_ID': -1002124864225,
-    'THREAD_ID': 16232,
+    'CHAT_ID': "-1002124864225",
+    'THREAD_ID': 16232,  # Укажите существующий thread или оставьте None
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
     'ADMINS': ["1004974578", "7233257134", "6195550631"],
 }
 
-# --- Инициализация бота ---
-bot = Bot(token=CONFIG['TOKEN'])
-dp = Dispatcher()
+SEND_ARGS = {
+    'chat_id': CONFIG['CHAT_ID'],
+    'message_thread_id': CONFIG['THREAD_ID']
+}
 
-# --- Вспомогательные функции ---
+# Функции для работы с таблицей
 def extract_sheet_id(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
@@ -39,9 +47,40 @@ def clean_text(text):
 def moscow_time():
     return datetime.datetime.utcnow() + CONFIG['TIMEZONE_OFFSET']
 
-def is_admin(user_id):
-    return str(user_id) in CONFIG['ADMINS']
+def get_birthday_data():
+    if os.path.exists(CONFIG['CACHE_FILE']):
+        cache_age = time.time() - os.path.getmtime(CONFIG['CACHE_FILE'])
+        if cache_age < CONFIG['CACHE_EXPIRY']:
+            try:
+                with open(CONFIG['CACHE_FILE'], 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Ошибка кэша: {e}")
+    try:
+        sheet_id = extract_sheet_id(CONFIG['SPREADSHEET_URL'])
+        if not sheet_id:
+            logger.error("Некорректная ссылка на таблицу")
+            return []
 
+        response = requests.get(f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv')
+        response.encoding = 'utf-8'
+        content = response.text.lstrip('\ufeff')
+
+        records = []
+        for row in csv.DictReader(StringIO(content)):
+            nik = clean_text(row.get('Nik', ''))
+            date_str = clean_text(row.get('Дата', ''))
+            if nik and date_str:
+                records.append({'Nik': nik, 'Дата': date_str})
+
+        with open(CONFIG['CACHE_FILE'], 'w') as f:
+            json.dump(records, f)
+        return records
+    except Exception as e:
+        logger.error(f"Ошибка получения данных: {e}")
+        return []
+
+# Нормализация даты
 def normalize_date(date_str):
     digits = re.sub(r'\D', '', date_str)
     if len(digits) >= 3:
@@ -50,34 +89,6 @@ def normalize_date(date_str):
         if 1 <= month <= 12 and 1 <= day <= 31:
             return f"{month:02d}.{day:02d}"
     return None
-
-def get_birthday_data():
-    if os.path.exists(CONFIG['CACHE_FILE']):
-        cache_age = (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CONFIG['CACHE_FILE']))).total_seconds()
-        if cache_age < CONFIG['CACHE_EXPIRY']:
-            try:
-                with open(CONFIG['CACHE_FILE'], 'r') as f:
-                    return json.load(f)
-            except:
-                pass
-    try:
-        sheet_id = extract_sheet_id(CONFIG['SPREADSHEET_URL'])
-        if not sheet_id:
-            return []
-        response = requests.get(f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv')
-        response.encoding = 'utf-8'
-        content = response.text.lstrip('\ufeff')
-        records = []
-        for row in csv.DictReader(StringIO(content)):
-            nik = clean_text(row.get('Nik', ''))
-            date_str = clean_text(row.get('Дата', ''))
-            if nik and date_str:
-                records.append({'Nik': nik, 'Дата': date_str})
-        with open(CONFIG['CACHE_FILE'], 'w') as f:
-            json.dump(records, f)
-        return records
-    except:
-        return []
 
 def get_birthdays(target_date):
     return [r['Nik'] for r in get_birthday_data() if (nd := normalize_date(r['Дата'])) and nd == target_date]
@@ -107,27 +118,30 @@ def get_past_birthdays(days=7):
             past[past_date.strftime("%d.%m.%Y")] = names
     return past
 
-def format_birthdays(bd, title):
-    if not bd:
-        return f"📅 *{title}*\n\nНет дней рождения"
-    if isinstance(bd, list):
-        return f"📅 *{title}*\n\n🎉 " + ', '.join(bd)
-    if isinstance(bd, dict):
-        lines = [f"📅 *{title}*"]
-        for date, names in bd.items():
-            lines.append(f"🗓️ {date}: {', '.join(names)}")
-        return "\n".join(lines)
+# Форматирование сообщений
+def format_birthdays(birthdays, title):
+    if not birthdays:
+        return f"📅 *{title}*\n\nДней рождения нет 🎉"
+    if isinstance(birthdays, list):
+        return f"📅 *{title}*:\n" + ', '.join(f"🎂 {name}" for name in birthdays)
+    if isinstance(birthdays, dict):
+        result = [f"📅 *{title}*:"]
+        for date, names in sorted(birthdays.items(), key=lambda x: datetime.datetime.strptime(x[0], "%d.%m.%Y")):
+            result.append(f"🗓️ *{date}*: {', '.join(f'🎂 {n}' for n in names)}")
+        return '\n'.join(result)
     return ""
 
-# --- Хэндлеры команд ---
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer(
-        "👋 Привет! Я бот-помощник для младшей администрации.\n\nИспользуйте /help для просмотра команд."
+def is_admin(user_id):
+    return str(user_id) in CONFIG['ADMINS']
+
+# Команды
+async def start(update: Update, _):
+    await update.message.reply_text(
+        "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
+        "Используйте /help для просмотра команд."
     )
 
-@dp.message(Command("help"))
-async def help_cmd(message: types.Message):
+async def help_command(update: Update, _):
     text = (
         "Доступные команды:\n"
         "/check - ДР сегодня\n"
@@ -139,95 +153,101 @@ async def help_cmd(message: types.Message):
         "/force_update - обновить данные\n"
         "/send_test - тестовое сообщение"
     )
-    await message.answer(text)
+    await update.message.reply_text(text)
 
-@dp.message(Command("myid"))
-async def myid_cmd(message: types.Message):
-    status = "Админ" if is_admin(message.from_user.id) else "Пользователь"
-    await message.answer(f"Ваш ID: {message.from_user.id}\nСтатус: {status}")
+async def myid(update: Update, _):
+    user = update.effective_user
+    status = "Админ" if is_admin(user.id) else "Пользователь"
+    await update.message.reply_text(f"Ваш ID: {user.id}\nСтатус: {status}")
 
-async def add_heart(message: types.Message):
+async def check_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    birthdays = get_today_birthdays()
+    message = format_birthdays(birthdays, "Дни рождения сегодня")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
     try:
-        await bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=message.message_id,
-            text=message.text + " 🔥❤️"
-        )
+        await update.message.reply_text("❤️")  # Ставим сердечко на команду
     except:
         pass
 
-@dp.message(Command("check"))
-async def check_birthdays_cmd(message: types.Message):
-    bd = get_today_birthdays()
-    text = format_birthdays(bd, "Дни рождения сегодня")
-    await bot.send_message(chat_id=CONFIG['CHAT_ID'], message_thread_id=CONFIG['THREAD_ID'], text=text, parse_mode="Markdown")
-    await add_heart(message)
+async def upcoming_birthdays_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    days = int(context.args[0]) if context.args and context.args[0].isdigit() else 7
+    birthdays = get_upcoming_birthdays(days)
+    message = format_birthdays(birthdays, f"Ближайшие дни рождения (на {days} дней)")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
+    try:
+        await update.message.reply_text("❤️")
+    except:
+        pass
 
-@dp.message(Command("upcoming"))
-async def upcoming_birthdays_cmd(message: types.Message):
-    days = int(message.get_args()) if message.get_args().isdigit() else 7
-    bd = get_upcoming_birthdays(days)
-    text = format_birthdays(bd, f"Ближайшие дни рождения ({days} дней)")
-    await bot.send_message(chat_id=CONFIG['CHAT_ID'], message_thread_id=CONFIG['THREAD_ID'], text=text, parse_mode="Markdown")
-    await add_heart(message)
+async def recent_birthdays_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    days = int(context.args[0]) if context.args and context.args[0].isdigit() else 7
+    birthdays = get_past_birthdays(days)
+    message = format_birthdays(birthdays, f"Прошедшие дни рождения (за {days} дней)")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
+    try:
+        await update.message.reply_text("❤️")
+    except:
+        pass
 
-@dp.message(Command("recent"))
-async def recent_birthdays_cmd(message: types.Message):
-    days = int(message.get_args()) if message.get_args().isdigit() else 7
-    bd = get_past_birthdays(days)
-    text = format_birthdays(bd, f"Прошедшие дни рождения ({days} дней)")
-    await bot.send_message(chat_id=CONFIG['CHAT_ID'], message_thread_id=CONFIG['THREAD_ID'], text=text, parse_mode="Markdown")
-    await add_heart(message)
-
-@dp.message(Command("all"))
-async def all_birthdays_cmd(message: types.Message):
+async def all_birthdays_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     birthdays_dict = {}
-    admins = set(CONFIG['ADMINS'])
     for r in get_birthday_data():
         nik = r['Nik']
         if nd := normalize_date(r['Дата']):
             date_str = datetime.datetime.strptime(nd, "%m.%d").strftime("%d.%m")
-            birthdays_dict.setdefault(date_str, []).append(f"*{nik}*" if nik in admins else nik)
-    sorted_dates = sorted(birthdays_dict.keys(), key=lambda d: datetime.datetime.strptime(d, "%d.%m"))
-    lines = ["🎂 *Все дни рождения* 🎂\n"]
-    for date in sorted_dates:
-        lines.append(f"🗓️ {date}: {', '.join(birthdays_dict[date])}")
-    text = "\n".join(lines)
-    await bot.send_message(chat_id=CONFIG['CHAT_ID'], message_thread_id=CONFIG['THREAD_ID'], text=text, parse_mode="Markdown")
-    await add_heart(message)
+            birthdays_dict.setdefault(date_str, []).append(nik)
+    message = format_birthdays(birthdays_dict, "Все дни рождения")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
+    try:
+        await update.message.reply_text("❤️")
+    except:
+        pass
 
-@dp.message(Command("force_update"))
-async def force_update_cmd(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("❌ Только для админов")
+async def force_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Только для админов")
         return
     if os.path.exists(CONFIG['CACHE_FILE']):
         os.remove(CONFIG['CACHE_FILE'])
     get_birthday_data()
-    await message.reply("🔄 Данные обновлены")
-    await add_heart(message)
+    await update.message.reply_text("🔄 Данные обновлены")
 
-@dp.message(Command("send_test"))
-async def send_test_cmd(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("❌ Только для админов")
+async def send_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Только для админов")
         return
-    await bot.send_message(chat_id=CONFIG['CHAT_ID'], message_thread_id=CONFIG['THREAD_ID'], text="🔔 Тестовое сообщение")
-    await add_heart(message)
+    await context.bot.send_message(**SEND_ARGS, text="🔔 Тестовое сообщение")
+    try:
+        await update.message.reply_text("❤️")
+    except:
+        pass
 
-# --- Ежедневное напоминание ---
-async def daily_birthdays():
-    bd = get_today_birthdays()
-    text = format_birthdays(bd, "Дни рождения сегодня")
-    await bot.send_message(chat_id=CONFIG['CHAT_ID'], message_thread_id=CONFIG['THREAD_ID'], text=text, parse_mode="Markdown")
+# Запуск
+def main():
+    app = Application.builder().token(CONFIG['TOKEN']).build()
 
-scheduler = AsyncIOScheduler()
-scheduler.add_job(daily_birthdays, 'cron', hour=0, minute=0)
-scheduler.start()
+    global_cmds = {
+        "start": start,
+        "help": help_command,
+        "myid": myid
+    }
+    for cmd, fn in global_cmds.items():
+        app.add_handler(CommandHandler(cmd, fn))
 
-# --- Запуск бота ---
-async def main():
-    await dp.start_polling(bot)
+    group_filter = filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
+
+    group_cmds = {
+        "check": check_birthdays,
+        "upcoming": upcoming_birthdays_cmd,
+        "recent": recent_birthdays_cmd,
+        "all": all_birthdays_cmd,
+        "force_update": force_update,
+        "send_test": send_test
+    }
+    for cmd, fn in group_cmds.items():
+        app.add_handler(CommandHandler(cmd, fn, group_filter))
+
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
