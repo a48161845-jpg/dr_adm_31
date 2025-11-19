@@ -10,22 +10,23 @@ import csv
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
-
+import telegram.error
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 
-# ====== Логирование ======
+# Логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ====== Конфигурация ======
+# Конфигурация
 CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
     'CHAT_ID': "-1002124864225",
-    'THREAD_ID': 16232,
+    'THREAD_ID': 16232,  # Укажите существующий thread или оставьте None
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
@@ -37,7 +38,8 @@ SEND_ARGS = {
     'message_thread_id': CONFIG['THREAD_ID']
 }
 
-# ====== Функции ======
+# ---------------- Функции для работы с таблицей ----------------
+
 def extract_sheet_id(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
@@ -81,6 +83,8 @@ def get_birthday_data():
         logger.error(f"Ошибка получения данных: {e}")
         return []
 
+# ---------------- Даты ----------------
+
 def normalize_date(date_str):
     digits = re.sub(r'\D', '', date_str)
     if len(digits) >= 3:
@@ -118,13 +122,15 @@ def get_past_birthdays(days=7):
             past[past_date.strftime("%d.%m.%Y")] = names
     return past
 
+# ---------------- Форматирование сообщений ----------------
+
 def format_birthdays(birthdays, title):
     if not birthdays:
         return f"📅 *{title}*\n\nДней рождения нет 🎉"
     if isinstance(birthdays, list):
         return f"📅 *{title}*:\n" + ', '.join(f"🎂 {name}" for name in birthdays)
     if isinstance(birthdays, dict):
-        result = [f"📅 *{title}*:"]
+        result = [f"📅 *{title}*:"] 
         for date, names in sorted(birthdays.items(), key=lambda x: datetime.datetime.strptime(x[0], "%d.%m.%Y")):
             result.append(f"🗓️ *{date}*: {', '.join(f'🎂 {n}' for n in names)}")
         return '\n'.join(result)
@@ -133,7 +139,8 @@ def format_birthdays(birthdays, title):
 def is_admin(user_id):
     return str(user_id) in CONFIG['ADMINS']
 
-# ====== Команды ======
+# ---------------- Команды ----------------
+
 async def start(update: Update, _):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
@@ -164,7 +171,7 @@ async def check_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = format_birthdays(birthdays, "Дни рождения сегодня")
     await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
     try:
-        await update.message.reply_text("❤️")  # ставим ❤️ на команду
+        await update.message.reply_text("❤️")  # Ставим сердечко на команду
     except:
         pass
 
@@ -221,51 +228,51 @@ async def send_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-# ====== Планировщик ======
-def schedule_jobs(app):
+# ---------------- Планировщик ----------------
+
+async def send_daily_birthdays(bot):
+    birthdays = get_today_birthdays()
+    message = format_birthdays(birthdays, "Дни рождения сегодня")
+    await bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
+
+async def schedule_jobs(app: Application):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        lambda: app.bot.send_message(
-            chat_id=CONFIG['CHAT_ID'],
-            text=format_birthdays(get_today_birthdays(), "🎉 ДР сегодня!"),
-            parse_mode="Markdown",
-            message_thread_id=CONFIG['THREAD_ID']
-        ),
-        'cron',
-        hour=9,
-        minute=0
-    )
+    scheduler.add_job(lambda: app.create_task(send_daily_birthdays(app.bot)),
+                      'cron', hour=6, minute=0)  # 6 UTC = 9 МСК
     scheduler.start()
 
-# ====== Запуск ======
-def main():
+# ---------------- Основной запуск ----------------
+
+async def main():
     app = Application.builder().token(CONFIG['TOKEN']).build()
 
     # Глобальные команды
-    for cmd, fn in {
+    global_cmds = {
         "start": start,
         "help": help_command,
         "myid": myid
-    }.items():
+    }
+    for cmd, fn in global_cmds.items():
         app.add_handler(CommandHandler(cmd, fn))
 
-    # Групповые команды
+    # Команды в группах
     group_filter = filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
-    for cmd, fn in {
+    group_cmds = {
         "check": check_birthdays,
         "upcoming": upcoming_birthdays_cmd,
         "recent": recent_birthdays_cmd,
         "all": all_birthdays_cmd,
         "force_update": force_update,
         "send_test": send_test
-    }.items():
+    }
+    for cmd, fn in group_cmds.items():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
-    # Планировщик
-    schedule_jobs(app)
+    # Запуск планировщика после инициализации бота
+    app.post_init = schedule_jobs
 
-    # Запуск polling
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
