@@ -9,7 +9,12 @@ from io import StringIO
 import csv
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    filters
+)
 
 # Логирование
 logging.basicConfig(
@@ -35,7 +40,7 @@ SEND_ARGS = {
     'message_thread_id': CONFIG['THREAD_ID']
 }
 
-# Функции для работы с таблицей
+# -------------------- Работа с таблицей --------------------
 def extract_sheet_id(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
@@ -79,7 +84,7 @@ def get_birthday_data():
         logger.error(f"Ошибка получения данных: {e}")
         return []
 
-# Нормализация даты
+# -------------------- Даты и поиск --------------------
 def normalize_date(date_str):
     digits = re.sub(r'\D', '', date_str)
     if len(digits) >= 3:
@@ -117,7 +122,7 @@ def get_past_birthdays(days=7):
             past[past_date.strftime("%d.%m.%Y")] = names
     return past
 
-# Форматирование сообщений
+# -------------------- Форматирование --------------------
 def format_birthdays(birthdays, title):
     if not birthdays:
         return f"📅 {title}\n\nДней рождения нет"
@@ -133,7 +138,7 @@ def format_birthdays(birthdays, title):
 def is_admin(user_id):
     return str(user_id) in CONFIG['ADMINS']
 
-# Команды
+# -------------------- Команды --------------------
 async def start(update: Update, _):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
@@ -206,7 +211,7 @@ async def send_test(update, context):
     await context.bot.send_message(**SEND_ARGS, text="🔔 Тестовое сообщение")
     await update.message.reply_text("✅ Отправлено в ветку")
 
-# Автоматическое напоминание в 00:00 МСК
+# -------------------- JobQueue --------------------
 async def daily_birthday_reminder(context: ContextTypes.DEFAULT_TYPE):
     birthdays = get_today_birthdays()
     message = format_birthdays(birthdays, "Дни рождения сегодня")
@@ -216,9 +221,10 @@ async def daily_birthday_reminder(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка при отправке ежедневного уведомления: {e}")
 
-# Запуск
+# -------------------- Запуск --------------------
 def main():
-    app = Application.builder().token(CONFIG['TOKEN']).build()
+    # Включаем JobQueue
+    app = ApplicationBuilder().token(CONFIG['TOKEN']).job_queue_enabled(True).build()
 
     # Регистрация команд
     global_cmds = {
@@ -243,10 +249,9 @@ def main():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
     # Добавляем ежедневную задачу (00:00 МСК = 21:00 UTC)
-    job_queue = app.job_queue
-    job_queue.run_daily(
+    app.job_queue.run_daily(
         daily_birthday_reminder,
-        time=datetime.time(hour=21, minute=0, second=0),
+        time=datetime.time(hour=21, minute=0, second=0)
     )
 
     app.run_polling()
