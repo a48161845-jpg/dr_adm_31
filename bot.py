@@ -1,11 +1,3 @@
-# Telegram Birthday Bot
-# Полный код бота с:
-# - ежедневным напоминанием в 00:00 МСК
-# - авто-обновлением таблицы раз в час
-# - красивыми MarkdownV2 шаблонами сообщений
-#
-# Требования: python 3.9+, python-telegram-bot v20+, requests
-
 import os
 import datetime
 import requests
