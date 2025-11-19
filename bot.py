@@ -10,7 +10,7 @@ import csv
 import asyncio
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, filters, CallbackContext
 import telegram.error
 
 # Логирование
@@ -190,7 +190,7 @@ async def all_birthdays_cmd(update, context):
             date_str = datetime.datetime.strptime(nd, "%m.%d").strftime("%d.%m")
             birthdays_dict.setdefault(date_str, []).append(nik)
     message = format_birthdays(birthdays_dict, "Все дни рождения")
-    await context.bot.send_message(**SEND_ARTS, text=message)
+    await context.bot.send_message(**SEND_ARGS, text=message)
     await update.message.reply_text("✅ Отправлено в ветку")
 
 async def force_update(update, context):
@@ -215,33 +215,32 @@ class ReminderManager:
         self.enabled = True
         self.last_reminder_date = None
     
-    async def send_daily_reminder(self, application):
+    async def send_daily_reminder(self, context: CallbackContext):
         """Отправка ежедневного напоминания о днях рождения"""
         if not self.enabled:
+            logger.info("Напоминания выключены")
             return
             
         today = moscow_time().date()
         
         # Проверяем, не отправляли ли уже напоминание сегодня
         if self.last_reminder_date == today:
+            logger.info("Напоминание уже отправлено сегодня")
             return
             
         birthdays = get_today_birthdays()
         if birthdays:
             message = format_birthdays(birthdays, "🎉 Дни рождения сегодня!")
             message += "\n\nНе забудьте поздравить! 🎂"
+            
+            try:
+                await context.bot.send_message(**SEND_ARGS, text=message)
+                self.last_reminder_date = today
+                logger.info(f"Ежедневное напоминание отправлено: {len(birthdays)} ДР")
+            except Exception as e:
+                logger.error(f"Ошибка отправки напоминания: {e}")
         else:
-            # Если дней рождения нет, можно отправлять сообщение или молчать
-            # Раскомментируйте следующую строку, если хотите сообщения даже когда ДР нет
-            # message = "📅 Сегодня дней рождения нет"
-            return
-        
-        try:
-            await application.bot.send_message(**SEND_ARGS, text=message)
-            self.last_reminder_date = today
-            logger.info(f"Ежедневное напоминание отправлено: {len(birthdays)} ДР")
-        except Exception as e:
-            logger.error(f"Ошибка отправки напоминания: {e}")
+            logger.info("Сегодня дней рождения нет")
     
     def toggle_reminders(self, enable=None):
         """Включить/выключить напоминания"""
@@ -254,7 +253,7 @@ class ReminderManager:
 # Глобальный менеджер напоминаний
 reminder_manager = ReminderManager()
 
-async def set_reminder(update, context):
+async def set_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для управления напоминаниями"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Только для админов")
@@ -278,33 +277,27 @@ async def set_reminder(update, context):
     
     await update.message.reply_text(f"🔔 Ежедневные напоминания {status}")
 
-async def schedule_daily_reminder(application):
+async def daily_reminder_callback(context: CallbackContext):
+    """Callback для ежедневного напоминания"""
+    await reminder_manager.send_daily_reminder(context)
+
+def schedule_daily_reminder(application: Application):
     """Планировщик ежедневных напоминаний"""
-    while True:
-        try:
-            now = moscow_time()
-            
-            # Вычисляем время до следующей полночи
-            target_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            if now >= target_time:
-                target_time += datetime.timedelta(days=1)
-            
-            wait_seconds = (target_time - now).total_seconds()
-            
-            logger.info(f"Следующее напоминание в {target_time.strftime('%H:%M %d.%m.%Y')} (через {wait_seconds:.0f} секунд)")
-            
-            # Ждем до полночи
-            await asyncio.sleep(wait_seconds)
-            
-            # Отправляем напоминание
-            await reminder_manager.send_daily_reminder(application)
-            
-            # Ждем 1 минуту перед следующей проверкой (на случай ошибок)
-            await asyncio.sleep(60)
-            
-        except Exception as e:
-            logger.error(f"Ошибка в планировщике напоминаний: {e}")
-            await asyncio.sleep(300)  # Ждем 5 минут перед повторной попыткой
+    # Вычисляем время до следующей полночи
+    now = moscow_time()
+    target_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if now >= target_time:
+        target_time += datetime.timedelta(days=1)
+    
+    # Создаем job который будет запускаться каждый день в полночь
+    application.job_queue.run_daily(
+        daily_reminder_callback,
+        time=datetime.time(hour=0, minute=0, second=0),  # 00:00:00
+        days=tuple(range(7)),  # Каждый день
+        name="daily_birthday_reminder"
+    )
+    
+    logger.info(f"Ежедневное напоминание запланировано на 00:00 МСК")
 
 # Запуск
 def main():
@@ -332,8 +325,8 @@ def main():
     for cmd, fn in group_cmds.items():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
-    # Запускаем планировщик напоминаний
-    app.create_task(schedule_daily_reminder(app))
+    # Настраиваем планировщик напоминаний
+    schedule_daily_reminder(app)
 
     app.run_polling()
 
