@@ -8,23 +8,23 @@ import re
 from io import StringIO
 import csv
 
-from telegram import Update, MessageEntity
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
-import telegram.error
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Логирование
+# ------------------- Логирование -------------------
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация
+# ------------------- Конфигурация -------------------
 CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
     'CHAT_ID': "-1002124864225",
-    'THREAD_ID': 16232,  # Укажите существующий thread или оставьте None
+    'THREAD_ID': 16232,  # Укажите существующий thread или None
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
@@ -36,7 +36,7 @@ SEND_ARGS = {
     'message_thread_id': CONFIG['THREAD_ID']
 }
 
-# Функции для работы с таблицей
+# ------------------- Вспомогательные функции -------------------
 def extract_sheet_id(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
@@ -48,6 +48,7 @@ def moscow_time():
     return datetime.datetime.utcnow() + CONFIG['TIMEZONE_OFFSET']
 
 def get_birthday_data():
+    """Возвращает данные ДР из кеша или Google Sheets"""
     if os.path.exists(CONFIG['CACHE_FILE']):
         cache_age = time.time() - os.path.getmtime(CONFIG['CACHE_FILE'])
         if cache_age < CONFIG['CACHE_EXPIRY']:
@@ -80,7 +81,6 @@ def get_birthday_data():
         logger.error(f"Ошибка получения данных: {e}")
         return []
 
-# Нормализация даты
 def normalize_date(date_str):
     digits = re.sub(r'\D', '', date_str)
     if len(digits) >= 3:
@@ -118,7 +118,6 @@ def get_past_birthdays(days=7):
             past[past_date.strftime("%d.%m.%Y")] = names
     return past
 
-# Форматирование сообщений
 def format_birthdays(birthdays, title):
     if not birthdays:
         return f"📅 *{title}*\n\nДней рождения нет 🎉"
@@ -134,7 +133,7 @@ def format_birthdays(birthdays, title):
 def is_admin(user_id):
     return str(user_id) in CONFIG['ADMINS']
 
-# Команды
+# ------------------- Команды -------------------
 async def start(update: Update, _):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
@@ -165,7 +164,7 @@ async def check_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = format_birthdays(birthdays, "Дни рождения сегодня")
     await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
     try:
-        await update.message.reply_text("❤️")  # Ставим сердечко на команду
+        await update.message.reply_text("❤️")
     except:
         pass
 
@@ -222,10 +221,23 @@ async def send_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-# Запуск
+# ------------------- Автонапоминания -------------------
+async def send_daily_birthdays(context: ContextTypes.DEFAULT_TYPE):
+    birthdays = get_today_birthdays()
+    if birthdays:
+        message = format_birthdays(birthdays, "Сегодняшние дни рождения")
+        await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
+
+def schedule_jobs(app: Application):
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(lambda: app.create_task(send_daily_birthdays(app)), 'cron', hour=9, minute=0)
+    scheduler.start()
+
+# ------------------- Запуск -------------------
 def main():
     app = Application.builder().token(CONFIG['TOKEN']).build()
 
+    # Основные команды
     global_cmds = {
         "start": start,
         "help": help_command,
@@ -245,8 +257,12 @@ def main():
         "send_test": send_test
     }
     for cmd, fn in group_cmds.items():
-        app.add_handler(CommandHandler(cmd, fn, group_filter))
+        app.add_handler(CommandHandler(cmd, fn, filters=group_filter))
 
+    # Запуск планировщика
+    schedule_jobs(app)
+
+    # Запуск бота
     app.run_polling()
 
 if __name__ == "__main__":
