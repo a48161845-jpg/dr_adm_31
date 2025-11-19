@@ -25,7 +25,7 @@ CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
     'CHAT_ID': "-1002124864225",
-    'THREAD_ID': 16232,  # Укажите существующий thread или оставьте None
+    'THREAD_ID': 16232,
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
@@ -225,16 +225,12 @@ async def daily_reminder_task(app):
         except telegram.error.TelegramError as e:
             logger.error(f"Ошибка при отправке автоматического сообщения: {e}")
 
-# --- Запуск бота ---
-def main():
+# --- Асинхронный запуск бота ---
+async def main():
     app = Application.builder().token(CONFIG['TOKEN']).build()
 
-    # Регистрация команд
-    global_cmds = {
-        "start": start,
-        "help": help_command,
-        "myid": myid
-    }
+    # --- Регистрируем команды ---
+    global_cmds = {"start": start, "help": help_command, "myid": myid}
     for cmd, fn in global_cmds.items():
         app.add_handler(CommandHandler(cmd, fn))
 
@@ -251,9 +247,10 @@ def main():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
     # --- Запуск асинхронной задачи ---
-    app.post_init.append(lambda app: asyncio.create_task(daily_reminder_task(app)))
+    asyncio.create_task(daily_reminder_task(app))
 
-    app.run_polling()
+    # --- Запуск бота ---
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
