@@ -30,7 +30,7 @@ CONFIG = {
 }
 
 bot = Bot(token=CONFIG['TOKEN'])
-dp = Dispatcher(bot)
+dp = Dispatcher()  # В aiogram 3.x не передаем bot
 scheduler = AsyncIOScheduler()
 
 # ----------------- Вспомогательные функции -----------------
@@ -176,7 +176,7 @@ scheduler.start()
 
 # ----------------- Запуск -----------------
 async def main():
-    await dp.start_polling()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
