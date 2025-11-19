@@ -13,19 +13,19 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 import telegram.error
 
-# --- Логирование ---
+# Логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# --- Конфигурация ---
+# Конфигурация
 CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
     'CHAT_ID': "-1002124864225",
-    'THREAD_ID': 16232,
+    'THREAD_ID': 16232,  # Укажите существующий thread или оставьте None
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
@@ -37,7 +37,7 @@ SEND_ARGS = {
     'message_thread_id': CONFIG['THREAD_ID']
 }
 
-# --- Функции для работы с таблицей ---
+# Функции для работы с таблицей
 def extract_sheet_id(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
@@ -81,7 +81,7 @@ def get_birthday_data():
         logger.error(f"Ошибка получения данных: {e}")
         return []
 
-# --- Нормализация даты ---
+# Нормализация даты
 def normalize_date(date_str):
     digits = re.sub(r'\D', '', date_str)
     if len(digits) >= 3:
@@ -119,12 +119,12 @@ def get_past_birthdays(days=7):
             past[past_date.strftime("%d.%m.%Y")] = names
     return past
 
-# --- Форматирование сообщений ---
+# Форматирование сообщений
 def format_birthdays(birthdays, title):
     if not birthdays:
         return f"📅 {title}\n\nДней рождения нет"
     if isinstance(birthdays, list):
-        return f"📅 {title}:\n" + ', '.join(birthdays)
+        return f"🎉 {title}:\n\n" + '\n'.join([f"🎂 {name}" for name in birthdays])
     if isinstance(birthdays, dict):
         result = [f"📅 {title}:"]
         for date, names in birthdays.items():
@@ -135,7 +135,7 @@ def format_birthdays(birthdays, title):
 def is_admin(user_id):
     return str(user_id) in CONFIG['ADMINS']
 
-# --- Команды ---
+# Команды
 async def start(update: Update, _):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
@@ -152,7 +152,8 @@ async def help_command(update: Update, _):
         "/myid - ваш ID\n\n"
         "Команды для админов:\n"
         "/force_update - обновить данные\n"
-        "/send_test - тестовое сообщение"
+        "/send_test - тестовое сообщение\n"
+        "/set_reminder - включить/выключить напоминания"
     )
     await update.message.reply_text(text)
 
@@ -189,7 +190,7 @@ async def all_birthdays_cmd(update, context):
             date_str = datetime.datetime.strptime(nd, "%m.%d").strftime("%d.%m")
             birthdays_dict.setdefault(date_str, []).append(nik)
     message = format_birthdays(birthdays_dict, "Все дни рождения")
-    await context.bot.send_message(**SEND_ARGS, text=message)
+    await context.bot.send_message(**SEND_ARTS, text=message)
     await update.message.reply_text("✅ Отправлено в ветку")
 
 async def force_update(update, context):
@@ -208,49 +209,133 @@ async def send_test(update, context):
     await context.bot.send_message(**SEND_ARGS, text="🔔 Тестовое сообщение")
     await update.message.reply_text("✅ Отправлено в ветку")
 
-# --- Ежедневное напоминание через asyncio ---
-async def daily_reminder_task(app):
-    await asyncio.sleep(1)  # Ждем запуска бота
-    while True:
-        now = moscow_time()
-        midnight = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        wait_seconds = (midnight - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
-
+# Функции для напоминаний
+class ReminderManager:
+    def __init__(self):
+        self.enabled = True
+        self.last_reminder_date = None
+    
+    async def send_daily_reminder(self, application):
+        """Отправка ежедневного напоминания о днях рождения"""
+        if not self.enabled:
+            return
+            
+        today = moscow_time().date()
+        
+        # Проверяем, не отправляли ли уже напоминание сегодня
+        if self.last_reminder_date == today:
+            return
+            
         birthdays = get_today_birthdays()
-        message = format_birthdays(birthdays, "Дни рождения сегодня")
+        if birthdays:
+            message = format_birthdays(birthdays, "🎉 Дни рождения сегодня!")
+            message += "\n\nНе забудьте поздравить! 🎂"
+        else:
+            # Если дней рождения нет, можно отправлять сообщение или молчать
+            # Раскомментируйте следующую строку, если хотите сообщения даже когда ДР нет
+            # message = "📅 Сегодня дней рождения нет"
+            return
+        
         try:
-            await app.bot.send_message(**SEND_ARGS, text=message)
-            logger.info("✅ Отправлено автоматическое напоминание о ДР")
-        except telegram.error.TelegramError as e:
-            logger.error(f"Ошибка при отправке автоматического сообщения: {e}")
+            await application.bot.send_message(**SEND_ARGS, text=message)
+            self.last_reminder_date = today
+            logger.info(f"Ежедневное напоминание отправлено: {len(birthdays)} ДР")
+        except Exception as e:
+            logger.error(f"Ошибка отправки напоминания: {e}")
+    
+    def toggle_reminders(self, enable=None):
+        """Включить/выключить напоминания"""
+        if enable is None:
+            self.enabled = not self.enabled
+        else:
+            self.enabled = enable
+        return self.enabled
 
-# --- Асинхронный запуск бота ---
-async def main():
+# Глобальный менеджер напоминаний
+reminder_manager = ReminderManager()
+
+async def set_reminder(update, context):
+    """Команда для управления напоминаниями"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Только для админов")
+        return
+    
+    if context.args:
+        arg = context.args[0].lower()
+        if arg in ['on', 'вкл', '1', 'true']:
+            reminder_manager.toggle_reminders(True)
+            status = "включены"
+        elif arg in ['off', 'выкл', '0', 'false']:
+            reminder_manager.toggle_reminders(False)
+            status = "выключены"
+        else:
+            await update.message.reply_text("❌ Используйте: /set_reminder on/off")
+            return
+    else:
+        # Без аргумента - переключить состояние
+        current_state = reminder_manager.toggle_reminders()
+        status = "включены" if current_state else "выключены"
+    
+    await update.message.reply_text(f"🔔 Ежедневные напоминания {status}")
+
+async def schedule_daily_reminder(application):
+    """Планировщик ежедневных напоминаний"""
+    while True:
+        try:
+            now = moscow_time()
+            
+            # Вычисляем время до следующей полночи
+            target_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if now >= target_time:
+                target_time += datetime.timedelta(days=1)
+            
+            wait_seconds = (target_time - now).total_seconds()
+            
+            logger.info(f"Следующее напоминание в {target_time.strftime('%H:%M %d.%m.%Y')} (через {wait_seconds:.0f} секунд)")
+            
+            # Ждем до полночи
+            await asyncio.sleep(wait_seconds)
+            
+            # Отправляем напоминание
+            await reminder_manager.send_daily_reminder(application)
+            
+            # Ждем 1 минуту перед следующей проверкой (на случай ошибок)
+            await asyncio.sleep(60)
+            
+        except Exception as e:
+            logger.error(f"Ошибка в планировщике напоминаний: {e}")
+            await asyncio.sleep(300)  # Ждем 5 минут перед повторной попыткой
+
+# Запуск
+def main():
     app = Application.builder().token(CONFIG['TOKEN']).build()
 
-    # --- Регистрируем команды ---
-    global_cmds = {"start": start, "help": help_command, "myid": myid}
+    global_cmds = {
+        "start": start,
+        "help": help_command,
+        "myid": myid
+    }
     for cmd, fn in global_cmds.items():
         app.add_handler(CommandHandler(cmd, fn))
 
     group_filter = filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
+
     group_cmds = {
         "check": check_birthdays,
         "upcoming": upcoming_birthdays_cmd,
         "recent": recent_birthdays_cmd,
         "all": all_birthdays_cmd,
         "force_update": force_update,
-        "send_test": send_test
+        "send_test": send_test,
+        "set_reminder": set_reminder
     }
     for cmd, fn in group_cmds.items():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
-    # --- Запуск асинхронной задачи ---
-    asyncio.create_task(daily_reminder_task(app))
+    # Запускаем планировщик напоминаний
+    app.create_task(schedule_daily_reminder(app))
 
-    # --- Запуск бота ---
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
