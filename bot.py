@@ -6,19 +6,19 @@ import json
 import re
 import csv
 from io import StringIO
+import asyncio
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Логирование
+# ----------------- Логирование -----------------
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация
+# ----------------- Конфигурация -----------------
 CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
@@ -33,7 +33,7 @@ bot = Bot(token=CONFIG['TOKEN'])
 dp = Dispatcher(bot)
 scheduler = AsyncIOScheduler()
 
-# ----------------- Функции -----------------
+# ----------------- Вспомогательные функции -----------------
 def extract_sheet_id(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
@@ -101,14 +101,14 @@ def is_admin(user_id):
     return str(user_id) in CONFIG['ADMINS']
 
 # ----------------- Команды -----------------
-@dp.message_handler(commands=['start'])
+@dp.message(commands=['start'])
 async def start_cmd(message: types.Message):
     await message.reply(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
         "Используйте /help для просмотра команд."
     )
 
-@dp.message_handler(commands=['help'])
+@dp.message(commands=['help'])
 async def help_cmd(message: types.Message):
     text = (
         "Доступные команды:\n"
@@ -121,19 +121,19 @@ async def help_cmd(message: types.Message):
     )
     await message.reply(text)
 
-@dp.message_handler(commands=['myid'])
+@dp.message(commands=['myid'])
 async def myid_cmd(message: types.Message):
     status = "Админ" if is_admin(message.from_user.id) else "Пользователь"
     await message.reply(f"Ваш ID: {message.from_user.id}\nСтатус: {status}")
 
-@dp.message_handler(commands=['check'])
+@dp.message(commands=['check'])
 async def check_cmd(message: types.Message):
     birthdays = get_today_birthdays()
     message_text = format_birthdays(birthdays, "Дни рождения сегодня")
     await bot.send_message(CONFIG['CHAT_ID'], message_text)
     await message.reply("✅ Отправлено в ветку")
 
-@dp.message_handler(commands=['all'])
+@dp.message(commands=['all'])
 async def all_cmd(message: types.Message):
     birthdays_dict = {}
     for r in get_birthday_data():
@@ -147,7 +147,7 @@ async def all_cmd(message: types.Message):
     await bot.send_message(CONFIG['CHAT_ID'], "\n".join(result))
     await message.reply("✅ Отправлено в ветку")
 
-@dp.message_handler(commands=['force_update'])
+@dp.message(commands=['force_update'])
 async def force_update_cmd(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.reply("❌ Только для админов")
@@ -157,7 +157,7 @@ async def force_update_cmd(message: types.Message):
     get_birthday_data()
     await message.reply("🔄 Данные обновлены")
 
-@dp.message_handler(commands=['send_test'])
+@dp.message(commands=['send_test'])
 async def send_test_cmd(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.reply("❌ Только для админов")
@@ -175,6 +175,8 @@ scheduler.add_job(daily_birthday_reminder, 'cron', hour=0, minute=0)
 scheduler.start()
 
 # ----------------- Запуск -----------------
+async def main():
+    await dp.start_polling()
+
 if __name__ == "__main__":
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
