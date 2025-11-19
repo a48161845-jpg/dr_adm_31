@@ -9,6 +9,7 @@ from io import StringIO
 import asyncio
 
 from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ----------------- Логирование -----------------
@@ -30,26 +31,26 @@ CONFIG = {
 }
 
 bot = Bot(token=CONFIG['TOKEN'])
-dp = Dispatcher()  # В aiogram 3.x не передаем bot
+dp = Dispatcher()
 scheduler = AsyncIOScheduler()
 
 # ----------------- Вспомогательные функции -----------------
-def extract_sheet_id(url):
+def extract_sheet_id(url: str) -> str | None:
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
 
-def clean_text(text):
+def clean_text(text: str) -> str:
     return re.sub(r'[\x00-\x1F\x7F-\x9F]', '', text).strip() if text else ""
 
-def moscow_time():
+def moscow_time() -> datetime.datetime:
     return datetime.datetime.utcnow() + CONFIG['TIMEZONE_OFFSET']
 
-def get_birthday_data():
+def get_birthday_data() -> list[dict]:
     if os.path.exists(CONFIG['CACHE_FILE']):
         cache_age = datetime.datetime.now().timestamp() - os.path.getmtime(CONFIG['CACHE_FILE'])
         if cache_age < CONFIG['CACHE_EXPIRY']:
             try:
-                with open(CONFIG['CACHE_FILE'], 'r') as f:
+                with open(CONFIG['CACHE_FILE'], 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
                 logger.warning(f"Ошибка кэша: {e}")
@@ -70,14 +71,14 @@ def get_birthday_data():
             if nik and date_str:
                 records.append({'Nik': nik, 'Дата': date_str})
 
-        with open(CONFIG['CACHE_FILE'], 'w') as f:
-            json.dump(records, f)
+        with open(CONFIG['CACHE_FILE'], 'w', encoding='utf-8') as f:
+            json.dump(records, f, ensure_ascii=False)
         return records
     except Exception as e:
         logger.error(f"Ошибка получения данных: {e}")
         return []
 
-def normalize_date(date_str):
+def normalize_date(date_str: str) -> str | None:
     digits = re.sub(r'\D', '', date_str)
     if len(digits) >= 3:
         day = int(digits[:2])
@@ -86,29 +87,29 @@ def normalize_date(date_str):
             return f"{month:02d}.{day:02d}"
     return None
 
-def get_birthdays(target_date):
+def get_birthdays(target_date: str) -> list[str]:
     return [r['Nik'] for r in get_birthday_data() if (nd := normalize_date(r['Дата'])) and nd == target_date]
 
-def get_today_birthdays():
+def get_today_birthdays() -> list[str]:
     return get_birthdays(moscow_time().strftime("%m.%d"))
 
-def format_birthdays(birthdays, title):
+def format_birthdays(birthdays: list[str], title: str) -> str:
     if not birthdays:
         return f"📅 {title}\n\nДней рождения нет"
     return f"📅 {title}:\n" + ', '.join(birthdays)
 
-def is_admin(user_id):
+def is_admin(user_id: int) -> bool:
     return str(user_id) in CONFIG['ADMINS']
 
 # ----------------- Команды -----------------
-@dp.message(commands=['start'])
+@dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await message.reply(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
         "Используйте /help для просмотра команд."
     )
 
-@dp.message(commands=['help'])
+@dp.message(Command("help"))
 async def help_cmd(message: types.Message):
     text = (
         "Доступные команды:\n"
@@ -121,19 +122,19 @@ async def help_cmd(message: types.Message):
     )
     await message.reply(text)
 
-@dp.message(commands=['myid'])
+@dp.message(Command("myid"))
 async def myid_cmd(message: types.Message):
     status = "Админ" if is_admin(message.from_user.id) else "Пользователь"
     await message.reply(f"Ваш ID: {message.from_user.id}\nСтатус: {status}")
 
-@dp.message(commands=['check'])
+@dp.message(Command("check"))
 async def check_cmd(message: types.Message):
     birthdays = get_today_birthdays()
     message_text = format_birthdays(birthdays, "Дни рождения сегодня")
     await bot.send_message(CONFIG['CHAT_ID'], message_text)
     await message.reply("✅ Отправлено в ветку")
 
-@dp.message(commands=['all'])
+@dp.message(Command("all"))
 async def all_cmd(message: types.Message):
     birthdays_dict = {}
     for r in get_birthday_data():
@@ -147,7 +148,7 @@ async def all_cmd(message: types.Message):
     await bot.send_message(CONFIG['CHAT_ID'], "\n".join(result))
     await message.reply("✅ Отправлено в ветку")
 
-@dp.message(commands=['force_update'])
+@dp.message(Command("force_update"))
 async def force_update_cmd(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.reply("❌ Только для админов")
@@ -157,7 +158,7 @@ async def force_update_cmd(message: types.Message):
     get_birthday_data()
     await message.reply("🔄 Данные обновлены")
 
-@dp.message(commands=['send_test'])
+@dp.message(Command("send_test"))
 async def send_test_cmd(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.reply("❌ Только для админов")
