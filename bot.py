@@ -7,6 +7,7 @@ import re
 import csv
 from io import StringIO
 import asyncio
+from urllib.parse import urlparse
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -99,10 +100,40 @@ def get_birthdays(target_date: str) -> list[str]:
 def get_today_birthdays() -> list[str]:
     return get_birthdays(moscow_time().strftime("%m.%d"))
 
+def get_upcoming_birthdays(days=7) -> dict:
+    today = moscow_time().date()
+    upcoming = {}
+    for i in range(1, days + 1):
+        future_date = today + datetime.timedelta(days=i)
+        date_key = future_date.strftime("%m.%d")
+        names = get_birthdays(date_key)
+        if names:
+            upcoming[future_date.strftime("%d.%m.%Y")] = names
+    return upcoming
+
+def get_past_birthdays(days=7) -> dict:
+    today = moscow_time().date()
+    past = {}
+    for i in range(1, days + 1):
+        past_date = today - datetime.timedelta(days=i)
+        date_key = past_date.strftime("%m.%d")
+        names = get_birthdays(date_key)
+        if names:
+            past[past_date.strftime("%d.%m.%Y")] = names
+    return past
+
 def format_birthdays(birthdays: list[str], title: str) -> str:
     if not birthdays:
         return f"📅 {title}\n\nДней рождения нет"
     return f"📅 {title}:\n" + ', '.join(birthdays)
+
+def format_birthdays_dict(birthdays: dict, title: str) -> str:
+    if not birthdays:
+        return f"📅 {title}\n\nДней рождения нет"
+    result = [f"📅 {title}:"]
+    for date, names in birthdays.items():
+        result.append(f"🗓️ {date}: {', '.join(names)}")
+    return "\n".join(result)
 
 def is_admin(user_id: int) -> bool:
     return str(user_id) in CONFIG['ADMINS']
@@ -121,10 +152,13 @@ async def help_cmd(message: types.Message):
         "Доступные команды:\n"
         "/check - ДР сегодня\n"
         "/all - весь список\n"
+        "/upcoming - ближайшие ДР\n"
+        "/recent - прошедшие ДР\n"
         "/myid - ваш ID\n\n"
         "Команды для админов:\n"
         "/force_update - обновить данные\n"
-        "/send_test - тестовое сообщение"
+        "/send_test - тестовое сообщение\n"
+        "/del_link <ссылка> - удалить сообщение бота по ссылке"
     )
     await message.reply(text)
 
@@ -154,6 +188,20 @@ async def all_cmd(message: types.Message):
     await bot.send_message(**SEND_ARGS, text="\n".join(result))
     await message.reply("✅ Отправлено в ветку")
 
+@dp.message(Command("upcoming"))
+async def upcoming_cmd(message: types.Message):
+    birthdays = get_upcoming_birthdays(7)
+    message_text = format_birthdays_dict(birthdays, "Ближайшие дни рождения (7 дней)")
+    await bot.send_message(**SEND_ARGS, text=message_text)
+    await message.reply("✅ Отправлено в ветку")
+
+@dp.message(Command("recent"))
+async def recent_cmd(message: types.Message):
+    birthdays = get_past_birthdays(7)
+    message_text = format_birthdays_dict(birthdays, "Прошедшие дни рождения (7 дней)")
+    await bot.send_message(**SEND_ARGS, text=message_text)
+    await message.reply("✅ Отправлено в ветку")
+
 @dp.message(Command("force_update"))
 async def force_update_cmd(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -172,6 +220,26 @@ async def send_test_cmd(message: types.Message):
     await bot.send_message(**SEND_ARGS, text="🔔 Тестовое сообщение")
     await message.reply("✅ Отправлено в ветку")
 
+# ----------------- Удаление сообщений по ссылке -----------------
+@dp.message(Command("del_link"))
+async def del_link_cmd(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("❌ Только для админов")
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply("❌ Укажите ссылку на сообщение")
+        return
+    link = args[1].strip()
+    try:
+        # Пример ссылки: https://t.me/c/CHAT_ID/MESSAGE_ID
+        parts = urlparse(link).path.split('/')
+        message_id = int(parts[-1])
+        await bot.delete_message(chat_id=CONFIG['CHAT_ID'], message_id=message_id)
+        await message.reply("✅ Сообщение удалено")
+    except Exception as e:
+        await message.reply(f"❌ Ошибка удаления: {e}")
+
 # ----------------- Планировщик -----------------
 async def daily_birthday_reminder():
     birthdays = get_today_birthdays()
@@ -184,7 +252,7 @@ async def start_scheduler():
 
 # ----------------- Запуск -----------------
 async def main():
-    await start_scheduler()  # запускаем планировщик внутри event loop
+    await start_scheduler()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
