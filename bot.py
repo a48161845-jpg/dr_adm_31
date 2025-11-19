@@ -131,7 +131,6 @@ def normalize_date(date_str):
         except:
             pass
 
-Mr. Spooky 👻, [18.10.2025 0:47]
 try:
             month = int(digits[0])
             day = int(digits[1:])
@@ -259,7 +258,6 @@ async def handle_force_update(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_send_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_test(update, context)
 
-Mr. Spooky 👻, [18.10.2025 0:47]
 async def start(update: Update, _):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
@@ -361,7 +359,6 @@ async def recent_birthdays(update, context):
         birthdays = get_past_birthdays(days)
         message = format_birthdays(birthdays, f"Недавние дни рождения (за {days} дней)")
 
-Mr. Spooky 👻, [18.10.2025 0:47]
 try:
             await context.bot.send_message(
                 text=message,
@@ -465,7 +462,6 @@ async def send_test(update, context):
             **SEND_ARGS
         )
 
-Mr. Spooky 👻, [18.10.2025 0:47]
 await update.message.reply_text("✅ Тестовое сообщение отправлено в ветку команды!")
     except telegram.error.BadRequest as e:
         if "Message thread not found" in str(e):
