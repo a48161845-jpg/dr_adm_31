@@ -234,7 +234,13 @@ def main():
         logger.error('BOT_TOKEN не задан')
         return
 
+    # Создаём приложение
     app = Application.builder().token(CONFIG['TOKEN']).build()
+
+    # Проверяем, что job_queue доступен
+    if app.job_queue is None:
+        from telegram.ext import JobQueue
+        app.job_queue = JobQueue(application=app)
 
     # --- Регистрация команд ---
     global_cmds = {"start": start, "help": help_command, "myid": myid}
@@ -253,19 +259,21 @@ def main():
     for cmd, fn in group_cmds.items():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
-    # --- Jobs ---
+    # --- Scheduled jobs ---
     tz = datetime.timezone(CONFIG['TIMEZONE_OFFSET'])
     jq = app.job_queue
-    jq.run_daily(send_daily_birthday_reminder, time=datetime.time(0, 0, tzinfo=tz))
-    jq.run_repeating(hourly_refresh_cache, interval=3600, first=10)
 
-    # --- Первичная загрузка ---
+    # Ежедневное сообщение в 00:00 MSK
+    jq.run_daily(send_daily_birthday_reminder, time=datetime.time(hour=0, minute=0, tzinfo=tz), name="daily_birthday_job")
+
+    # Ежечасное обновление кэша
+    jq.run_repeating(hourly_refresh_cache, interval=3600, first=10, name='hourly_cache_refresh')
+
+    # Первичная загрузка кэша
     try:
         get_birthday_data()
-    except: 
+    except Exception:
         pass
 
+    # Запуск бота
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
