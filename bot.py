@@ -7,6 +7,7 @@ import json
 import re
 from io import StringIO
 import csv
+import asyncio
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
@@ -207,15 +208,22 @@ async def send_test(update, context):
     await context.bot.send_message(**SEND_ARGS, text="🔔 Тестовое сообщение")
     await update.message.reply_text("✅ Отправлено в ветку")
 
-# --- Ежедневное напоминание в 00:00 мск через JobQueue ---
-async def send_daily_birthday(context: ContextTypes.DEFAULT_TYPE):
-    birthdays = get_today_birthdays()
-    message = format_birthdays(birthdays, "Дни рождения сегодня")
-    try:
-        await context.bot.send_message(**SEND_ARGS, text=message)
-        logger.info("✅ Отправлено автоматическое напоминание о ДР")
-    except telegram.error.TelegramError as e:
-        logger.error(f"Ошибка при отправке автоматического сообщения: {e}")
+# --- Ежедневное напоминание через asyncio ---
+async def daily_reminder_task(app):
+    await asyncio.sleep(1)  # Ждем запуска бота
+    while True:
+        now = moscow_time()
+        midnight = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        wait_seconds = (midnight - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+
+        birthdays = get_today_birthdays()
+        message = format_birthdays(birthdays, "Дни рождения сегодня")
+        try:
+            await app.bot.send_message(**SEND_ARGS, text=message)
+            logger.info("✅ Отправлено автоматическое напоминание о ДР")
+        except telegram.error.TelegramError as e:
+            logger.error(f"Ошибка при отправке автоматического сообщения: {e}")
 
 # --- Запуск бота ---
 def main():
@@ -231,7 +239,6 @@ def main():
         app.add_handler(CommandHandler(cmd, fn))
 
     group_filter = filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP
-
     group_cmds = {
         "check": check_birthdays,
         "upcoming": upcoming_birthdays_cmd,
@@ -243,16 +250,8 @@ def main():
     for cmd, fn in group_cmds.items():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
-    # --- Настройка ежедневного задания через JobQueue ---
-    now = moscow_time()
-    midnight = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    seconds_until_midnight = (midnight - now).total_seconds()
-
-    app.job_queue.run_repeating(
-        send_daily_birthday,
-        interval=86400,  # 24 часа
-        first=seconds_until_midnight
-    )
+    # --- Запуск асинхронной задачи ---
+    app.post_init.append(lambda app: asyncio.create_task(daily_reminder_task(app)))
 
     app.run_polling()
 
