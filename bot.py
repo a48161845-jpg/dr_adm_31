@@ -117,17 +117,17 @@ def get_past_birthdays(days=7):
             past[past_date.strftime("%d.%m.%Y")] = names
     return past
 
-# --- Форматирование сообщений ---
-def format_birthdays(birthdays, title):
+# --- Красивое форматирование ---
+def format_birthdays_list(birthdays, title):
     if not birthdays:
-        return f"📅 {title}\n\nДней рождения нет"
+        return f"📅 *{title}*\n\nНет дней рождения"
     if isinstance(birthdays, list):
-        return f"📅 {title}:\n" + ', '.join(birthdays)
+        return f"📅 *{title}*\n\n🎉 " + ', '.join(birthdays)
     if isinstance(birthdays, dict):
-        result = [f"📅 {title}:"]
+        lines = [f"📅 *{title}*"]
         for date, names in birthdays.items():
-            result.append(f"🗓️ {date}: {', '.join(names)}")
-        return '\n'.join(result)
+            lines.append(f"🗓️ {date}: {', '.join(names)}")
+        return "\n".join(lines)
     return ""
 
 def is_admin(user_id):
@@ -161,34 +161,50 @@ async def myid(update: Update, _):
 
 async def check_birthdays(update, context):
     birthdays = get_today_birthdays()
-    message = format_birthdays(birthdays, "Дни рождения сегодня")
-    await context.bot.send_message(**SEND_ARGS, text=message)
-    await update.message.reply_text("✅ Отправлено в ветку")
+    message = format_birthdays_list(birthdays, "Дни рождения сегодня")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode='Markdown')
+    if update.message:
+        await update.message.reply_text("✅ Отправлено в ветку")
 
 async def upcoming_birthdays_cmd(update, context):
     days = int(context.args[0]) if context.args and context.args[0].isdigit() else 7
     birthdays = get_upcoming_birthdays(days)
-    message = format_birthdays(birthdays, f"Ближайшие дни рождения (на {days} дней)")
-    await context.bot.send_message(**SEND_ARGS, text=message)
-    await update.message.reply_text("✅ Отправлено в ветку")
+    message = format_birthdays_list(birthdays, f"Ближайшие дни рождения (на {days} дней)")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode='Markdown')
+    if update.message:
+        await update.message.reply_text("✅ Отправлено в ветку")
 
 async def recent_birthdays_cmd(update, context):
     days = int(context.args[0]) if context.args and context.args[0].isdigit() else 7
     birthdays = get_past_birthdays(days)
-    message = format_birthdays(birthdays, f"Прошедшие дни рождения (за {days} дней)")
-    await context.bot.send_message(**SEND_ARGS, text=message)
-    await update.message.reply_text("✅ Отправлено в ветку")
+    message = format_birthdays_list(birthdays, f"Прошедшие дни рождения (за {days} дней)")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode='Markdown')
+    if update.message:
+        await update.message.reply_text("✅ Отправлено в ветку")
 
 async def all_birthdays_cmd(update, context):
     birthdays_dict = {}
+    admins = set(CONFIG['ADMINS'])
+    
     for r in get_birthday_data():
         nik = r['Nik']
         if nd := normalize_date(r['Дата']):
             date_str = datetime.datetime.strptime(nd, "%m.%d").strftime("%d.%m")
             birthdays_dict.setdefault(date_str, []).append(nik)
-    message = format_birthdays(birthdays_dict, "Все дни рождения")
-    await context.bot.send_message(**SEND_ARGS, text=message)
-    await update.message.reply_text("✅ Отправлено в ветку")
+    
+    # Сортировка по дате от 01.01 до 31.12
+    sorted_dates = sorted(birthdays_dict.keys(), key=lambda d: datetime.datetime.strptime(d, "%d.%m"))
+    
+    lines = ["🎂 *Все дни рождения* 🎂\n"]
+    for date in sorted_dates:
+        names = birthdays_dict[date]
+        formatted_names = [f"*{name}*" if name in admins else name for name in names]
+        lines.append(f"🗓️ {date}: {', '.join(formatted_names)}")
+    
+    message = "\n".join(lines)
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode='Markdown')
+    if update.message:
+        await update.message.reply_text("✅ Отправлено в ветку")
 
 async def force_update(update, context):
     if not is_admin(update.effective_user.id):
@@ -204,19 +220,19 @@ async def send_test(update, context):
         await update.message.reply_text("❌ Только для админов")
         return
     await context.bot.send_message(**SEND_ARGS, text="🔔 Тестовое сообщение")
-    await update.message.reply_text("✅ Отправлено в ветку")
+    if update.message:
+        await update.message.reply_text("✅ Отправлено в ветку")
 
-# --- Ежедневное напоминание через JobQueue ---
+# --- Ежедневное напоминание ---
 async def send_daily_birthdays(context: ContextTypes.DEFAULT_TYPE):
     birthdays = get_today_birthdays()
-    message = format_birthdays(birthdays, "Дни рождения сегодня")
-    await context.bot.send_message(**SEND_ARGS, text=message)
+    message = format_birthdays_list(birthdays, "Дни рождения сегодня")
+    await context.bot.send_message(**SEND_ARGS, text=message, parse_mode='Markdown')
 
 # --- Запуск бота ---
 def main():
     app = Application.builder().token(CONFIG['TOKEN']).build()
 
-    # Регистрация команд
     global_cmds = {"start": start, "help": help_command, "myid": myid}
     for cmd, fn in global_cmds.items():
         app.add_handler(CommandHandler(cmd, fn))
@@ -233,7 +249,7 @@ def main():
     for cmd, fn in group_cmds.items():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
-    # --- JobQueue: ежедневное напоминание в 00:00 мск ---
+    # JobQueue: ежедневное напоминание в 00:00 мск
     job_queue = app.job_queue
     job_queue.run_daily(
         send_daily_birthdays,
