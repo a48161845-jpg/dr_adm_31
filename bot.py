@@ -24,6 +24,7 @@ CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
     'CHAT_ID': "-1002124864225",
+    'THREAD_ID': 16232,  # Ветка для сообщений
     'TIMEZONE_OFFSET': datetime.timedelta(hours=3),
     'CACHE_FILE': 'birthday_cache.json',
     'CACHE_EXPIRY': 300,
@@ -33,6 +34,11 @@ CONFIG = {
 bot = Bot(token=CONFIG['TOKEN'])
 dp = Dispatcher()
 scheduler = AsyncIOScheduler()
+
+SEND_ARGS = {
+    'chat_id': CONFIG['CHAT_ID'],
+    'message_thread_id': CONFIG['THREAD_ID']
+}
 
 # ----------------- Вспомогательные функции -----------------
 def extract_sheet_id(url: str) -> str | None:
@@ -131,7 +137,7 @@ async def myid_cmd(message: types.Message):
 async def check_cmd(message: types.Message):
     birthdays = get_today_birthdays()
     message_text = format_birthdays(birthdays, "Дни рождения сегодня")
-    await bot.send_message(CONFIG['CHAT_ID'], message_text)
+    await bot.send_message(**SEND_ARGS, text=message_text)
     await message.reply("✅ Отправлено в ветку")
 
 @dp.message(Command("all"))
@@ -145,7 +151,7 @@ async def all_cmd(message: types.Message):
     result = [f"📅 Все дни рождения:"]
     for date, names in birthdays_dict.items():
         result.append(f"🗓️ {date}: {', '.join(names)}")
-    await bot.send_message(CONFIG['CHAT_ID'], "\n".join(result))
+    await bot.send_message(**SEND_ARGS, text="\n".join(result))
     await message.reply("✅ Отправлено в ветку")
 
 @dp.message(Command("force_update"))
@@ -163,14 +169,14 @@ async def send_test_cmd(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.reply("❌ Только для админов")
         return
-    await bot.send_message(CONFIG['CHAT_ID'], "🔔 Тестовое сообщение")
+    await bot.send_message(**SEND_ARGS, text="🔔 Тестовое сообщение")
     await message.reply("✅ Отправлено в ветку")
 
 # ----------------- Планировщик -----------------
 async def daily_birthday_reminder():
     birthdays = get_today_birthdays()
     message_text = format_birthdays(birthdays, "Дни рождения сегодня")
-    await bot.send_message(CONFIG['CHAT_ID'], message_text)
+    await bot.send_message(**SEND_ARGS, text=message_text)
 
 async def start_scheduler():
     scheduler.add_job(daily_birthday_reminder, 'cron', hour=0, minute=0)
@@ -178,7 +184,7 @@ async def start_scheduler():
 
 # ----------------- Запуск -----------------
 async def main():
-    await start_scheduler()  # планировщик внутри event loop
+    await start_scheduler()  # запускаем планировщик внутри event loop
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
