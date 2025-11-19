@@ -10,16 +10,17 @@ import csv
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Логирование
+# ====== Логирование ======
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация
+# ====== Конфигурация ======
 CONFIG = {
     'TOKEN': os.environ.get('BOT_TOKEN'),
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/1o_qYVyRkbQ-bw5f9RwEm4ThYEGltHCfeLLf7BgPgGmI/edit?usp=drivesdk",
@@ -36,7 +37,7 @@ SEND_ARGS = {
     'message_thread_id': CONFIG['THREAD_ID']
 }
 
-# ====== Функции работы с таблицей ======
+# ====== Функции ======
 def extract_sheet_id(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
     return match.group(1) if match else None
@@ -132,7 +133,7 @@ def format_birthdays(birthdays, title):
 def is_admin(user_id):
     return str(user_id) in CONFIG['ADMINS']
 
-# ====== Команды бота ======
+# ====== Команды ======
 async def start(update: Update, _):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник для младшей администрации.\n\n"
@@ -163,7 +164,7 @@ async def check_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = format_birthdays(birthdays, "Дни рождения сегодня")
     await context.bot.send_message(**SEND_ARGS, text=message, parse_mode="Markdown")
     try:
-        await update.message.reply_text("❤️")
+        await update.message.reply_text("❤️")  # ставим ❤️ на команду
     except:
         pass
 
@@ -221,9 +222,8 @@ async def send_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 # ====== Планировщик ======
-async def schedule_jobs(app):
+def schedule_jobs(app):
     scheduler = AsyncIOScheduler()
-
     scheduler.add_job(
         lambda: app.bot.send_message(
             chat_id=CONFIG['CHAT_ID'],
@@ -232,13 +232,13 @@ async def schedule_jobs(app):
             message_thread_id=CONFIG['THREAD_ID']
         ),
         'cron',
-        hour=9, minute=0
+        hour=9,
+        minute=0
     )
-
     scheduler.start()
 
-# ====== Запуск бота ======
-async def main():
+# ====== Запуск ======
+def main():
     app = Application.builder().token(CONFIG['TOKEN']).build()
 
     # Глобальные команды
@@ -262,11 +262,10 @@ async def main():
         app.add_handler(CommandHandler(cmd, fn, group_filter))
 
     # Планировщик
-    await schedule_jobs(app)
+    schedule_jobs(app)
 
     # Запуск polling
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
