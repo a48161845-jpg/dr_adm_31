@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 CONFIG = {
-    'TOKEN': 'YOUR_BOT_TOKEN_HERE',
+    'TOKEN': 'TOKEN',
     'SPREADSHEET_URL': "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit?usp=drivesdk",
     'CHAT_ID': "-1002124864225",
     'THREAD_ID': 16232,
