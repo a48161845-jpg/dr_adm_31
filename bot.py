@@ -172,11 +172,13 @@ async def daily_birthday_reminder():
     message_text = format_birthdays(birthdays, "Дни рождения сегодня")
     await bot.send_message(CONFIG['CHAT_ID'], message_text)
 
-scheduler.add_job(daily_birthday_reminder, 'cron', hour=0, minute=0)
-scheduler.start()
+async def start_scheduler():
+    scheduler.add_job(daily_birthday_reminder, 'cron', hour=0, minute=0)
+    scheduler.start()
 
 # ----------------- Запуск -----------------
 async def main():
+    await start_scheduler()  # планировщик внутри event loop
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
